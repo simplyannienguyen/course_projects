@@ -1,0 +1,191 @@
+---
+title: "Emergency Room - Annie Nguyen"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Patients arrive at the Emergency Room following an unknown probability distribution
+(stream 1). They will be treated by either of two doctors.
+
+A proportion of the patients are classified as NIA (need immediate attention) and the
+rest as CW (can wait). NIA patients are given the highest priority, 3, see a doctor as soon
+as possible for 40 ± 30 minutes (stream 2), then have their priority reduced to 2 and wait
+until a doctor is free again, when they receive further treatment for 30 ± 20 minutes (stream
+3) and are discharged.
+
+CW patients initially receive a priority of 1 and are treated (when their turn comes) for
+15 ± 10 minutes (stream 4); their priority is then increased to 2, they wait again until a
+doctor is free, receive 10 ± 5 minutes (stream 5) of final treatment and are discharged.
+
+An important aspect of this system is that patients who have already seen the doctor
+once compete with newly arriving patients who need a doctor. As indicated, patients who
+have already seen the doctor once have a priority level of 2 (either increased from 1 to 2 or
+decreased from 3 to 2). Thus, there is one shared queue for the first treatment activity and
+the final treatment activity. In addition, we assume that the doctors are interchangeable.
+That is, it does not matter which of the two doctors performs the first or final treatment.
+Simulate for 20 days of continuous operation, 24 hours per day. Note, the inter-arrival
+time and type of 100 patients are collected (based on a randomly selected weekday data).
+The data is attached.
+
+1. Analyze your results and explain your suggestions for reducing the waiting time of the
+patients.
+
+2. What is the average flow-time for NIA and CW patients before or after applying
+suggestions. different suggestions.
+
+3. Discuss the utilization of doctors before or after applying suggestions.
+
+```{r cars}
+library(simmer)
+
+
+#Define trajectory for patient
+patient <- trajectory("patients' path") %>%
+  
+  branch(option = function() sample(1:2, size=1, prob=c(0.18, 0.82), replace=T), continue = c(T,T), #18% of patients are NIA and 82% are CW (analyzed sample dataset). Define 2 branches.
+         
+  trajectory("NIA") %>% #Sub-trajectory for NIA patients
+    
+    set_attribute("priority", 3) %>% #Set to priority 3
+    set_prioritization(c(3, 7, T)) %>%
+    seize("doctor", 1) %>%
+    timeout(function() runif(1, 10, 70)) %>% #Uniform distribution 40 ± 30 minutes (between 10 and 70 minutes)
+    release("doctor", 1) %>%
+    
+    set_attribute("priority", 2) %>% #Decrease to priority 2
+    set_prioritization(c(2, 7, T)) %>%
+    seize("doctor", 1) %>%
+    timeout(function() runif(1, 10, 50)) %>% #Uniform distribution 30 ± 20 minutes (between 10 and 50 minutes)
+    release("doctor", 1),
+  
+  trajectory("CW") %>% #Sub-trajectory for CW patients
+    
+    set_attribute("priority", 1) %>% #Set to priority 1
+    set_prioritization(c(1, 7, T)) %>%
+    seize("doctor", 1) %>%
+    timeout(function() runif(1, 5, 25)) %>% #Uniform distribution 15 ± 10 minutes (between 5 and 25 minutes)
+    release("doctor", 1) %>%
+     
+    set_attribute("priority", 2) %>% #Increase to priority 2
+    set_prioritization(c(2, 7, T)) %>%
+    seize("doctor", 1) %>%
+    timeout(function() runif(1, 5, 15)) %>% #Uniform distribution 10 ± 15 minutes (between 5 and 15 minutes)
+    release("doctor", 1)
+) 
+
+
+set.seed(12)
+envs <- lapply(1:100, function(i) { #100 replications
+  simmer("Clinic") %>%
+    add_resource("doctor", 2) %>% #2 doctors
+    add_generator("patient", patient, function() rnorm(1, 15.077, 14.359), mon=2) %>% #Interarrival time assuming normal distribution with mean=15.077, sd=14.359 (Calculated from sample dataset)
+  run(28800) #20 days * 24 hours * 60 minutes = 28800 minutes
+})
+
+#Visualize
+library(simmer.plot)
+plot(patient, verbose=T)
+
+
+
+#a) 
+#We can expect to reduce the waiting time of patients when additional resources (doctors) are added.
+
+#Waiting time plot before adding additional resource
+arrivals <-get_mon_arrivals(envs)
+plot(arrivals, metric="waiting_time")
+
+#Average waiting time overall before adding additional resource
+waitingTime <- (arrivals$end_time - arrivals$start_time) - arrivals$activity_time
+mean(waitingTime)
+#The average waiting time for both NIA and CW patients is 14.19 minutes.
+
+
+#Add additional resource (+ one doctor)
+set.seed(123)
+envs2 <- lapply(1:100, function(i) { #100 replications
+  simmer("Clinic") %>%
+    add_resource("doctor", 3) %>% #3 doctors
+    add_generator("patient", patient, function() rnorm(1, 15.077, 14.359), mon=2) %>% #Interarrival time assuming normal distribution with mean=15.077, sd=14.359 (Calculated from sample dataset)
+  run(28800) #20 days * 24 hours * 60 minutes = 28800 minutes
+})
+
+#Waiting time plot after adding additional resource
+arrivals2 <-get_mon_arrivals(envs2)
+plot(arrivals2, metric="waiting_time")
+
+#Average waiting time overall after adding additional resource
+waitingTime2 <- (arrivals2$end_time - arrivals2$start_time) - arrivals2$activity_time
+mean(waitingTime2)
+
+#When we add an additional resource (+ one doctor), as expected, the waiting time for both NIA and CW patients is reduced to 1.68 minutes.
+
+
+
+#b)
+#Flow time plot before adding additional resource
+plot(arrivals, metric="flow_time")
+
+#Calculate flow time for each patient before adding additional resource
+x1 <- get_mon_arrivals(envs) 
+x2 <- get_mon_attributes(envs) 
+x1
+x2
+
+all <- merge(x1, x2, by=c("name", "replication"), all = T)
+all <- na.omit(all)
+
+NIA <- subset(all, all$value == 1)
+CW <- subset(all, all$value == 2)
+
+NIA.flowTime = (NIA$end_time - NIA$start_time)
+CW.flowTime = (CW$end_time - CW$start_time)
+
+#Average flow time for each type of patient before adding additional resource
+mean(NIA.flowTime, na.rm = T)
+#Average flow time is 40.26 minutes for NIA patients.
+mean(CW.flowTime, na.rm = T)
+#Average flow time is 48.09 minutes for CW patients.
+
+
+#Calculate flow time for each patient after adding additional resource
+x3 <- get_mon_arrivals(envs2) 
+x4 <- get_mon_attributes(envs2) 
+x3
+x4
+
+all <- merge(x3, x4, by=c("name", "replication"), all = T)
+all <- na.omit(all)
+
+NIA2 <- subset(all, all$value == 1)
+CW2 <- subset(all, all$value == 2)
+
+NIA2.flowTime = (NIA2$end_time - NIA2$start_time)
+CW2.flowTime = (CW2$end_time - CW2$start_time)
+
+#Average flow time for each type of patient after adding additional resource
+mean(NIA2.flowTime, na.rm = T)
+#Average flow time is 26.37 minutes for NIA patients.
+mean(CW2.flowTime, na.rm = T)
+#Average flow time is 34.28 minutes for CW patients.
+
+#When we add an additional resource (+ one doctor), the flow time is reduced significantly for both type of patients. 
+
+
+
+#c)
+#Utilization plot for 2 doctors (before)
+resources <- get_mon_resources(envs)
+head(resources)
+plot(resources, metric="utilization") 
+
+#Utilization plot for 3 doctors (after)
+resources2 <- get_mon_resources(envs2)
+head(resources2)
+plot(resources2, metric="utilization") 
+
+#When we add an additional resource (+ one doctor), the utilization percentage for our resource decreases.
+#This is expected because the more resources there are, the less occupied they will be.
+```
